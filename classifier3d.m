@@ -63,15 +63,11 @@ cv = cvpartition( imds.Labels,'KFold',Nloocv )
 %[imds.Labels =='1', cv.training(1), cv.training(2), cv.training(3), cv.training(4), cv.training(5), cv.training(6), cv.training(7), cv.training(8), sum(mycvmat,2)] 
 
 pocketchannels = 8;
-hyperweight = [1:1:10];
-hyperweight = [1, 10, 100, 1000];
-hyperweight = [1, 2, 10];
-% gradient is proportial to the number of classes in each fold. Weight the cases by the class imbalance ratio
-hyperweight = [1];
-hyperepoch  = [1:100];
-hyperepoch  = [4, 8, 16, 32, 64, 128];
-hyperepoch  = [128];
-hyperepoch  = [1];
+% Weight minority class by the imbalance ratio (majority count / minority count)
+counts = labelCount.Count;
+classratio = max(counts) / min(counts);
+hyperweight = [classratio];
+hyperepoch  = [64];
 accuracy = zeros(length(hyperweight ),length(hyperepoch)  );
 
 for idweight =1:length(hyperweight )
@@ -92,17 +88,21 @@ layers = [
     image3dInputLayer([256 256 64 ])
     
     convolution3dLayer(3,pocketchannels,'Padding','same')
+    batchNormalizationLayer
     reluLayer
     maxPooling3dLayer(4,'Stride',4)
-    
+
     convolution3dLayer(3,pocketchannels,'Padding','same')
+    batchNormalizationLayer
     reluLayer
     maxPooling3dLayer(4,'Stride',4)
-    
-    convolution3dLayer(3,2,'Padding','same')
+
+    convolution3dLayer(3,16,'Padding','same')
+    batchNormalizationLayer
     reluLayer
-    
+
     globalAveragePooling3dLayer
+    dropoutLayer(0.5)
     scalingLayer(Scale=0.25,Offset=0);
     softmaxLayer
     classificationLayer('ClassWeights',[1 hyperweight(idweight)],'Classes',unique(imds.Labels))];
@@ -211,8 +211,8 @@ options = trainingOptions('adam', ...
     'ValidationFrequency',1, ...
     'Verbose',false, ...
     'MiniBatchSize',batchsize, ...
-    'L2Regularization', 1.0000e-01, ...
-    'OutputNetwork','last-iteration',...'best-validation' 'last-iteration'
+    'L2Regularization', 1e-4, ...
+    'OutputNetwork','best-validation', ...
     'Plots','training-progress',...
     'OutputFcn',@(info)stopTraining(info ));
 
