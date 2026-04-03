@@ -97,7 +97,7 @@ layers = [
     reluLayer
     maxPooling3dLayer(4,'Stride',4)
 
-    convolution3dLayer(3,16,'Padding','same')
+    convolution3dLayer(3,2,'Padding','same')
     batchNormalizationLayer
     reluLayer
 
@@ -285,10 +285,10 @@ table(imds.Files,myactivationsone,myactivationstwo)
 % _Copyright 2018 The MathWorks, Inc._
 function imagedata= mycustomreader(filename)
      vectorimage = squeeze(niftiread(filename));
-     %imagedata = vectorimage(:,:,:,2).* (vectorimage(:,:,:,3) >=2);
+     imagedata = vectorimage(:,:,:,2).* (vectorimage(:,:,:,3) >=2);
      %imagedata = vectorimage(:,:,:,2).* (vectorimage(:,:,:,4) > 0);
      %imagedata = vectorimage(:,:,:,1) + 100* vectorimage(:,:,:,3) ;
-     imagedata = vectorimage;
+     %imagedata = vectorimage;
 end
 
 function stop = stopTraining(info)
