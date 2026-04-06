@@ -102,12 +102,15 @@ layers = [
     reluLayer
     maxPooling3dLayer(2,'Stride',2)
 
-    convolution3dLayer(3,2,'Padding','same')
+    convolution3dLayer(3,pocketchannels,'Padding','same')
     batchNormalizationLayer
     reluLayer
 
     globalAveragePooling3dLayer
+    fullyConnectedLayer(16)
+    reluLayer
     dropoutLayer(0.5)
+    fullyConnectedLayer(2)
     softmaxLayer
     classificationLayer('ClassWeights',[1 hyperweight(idweight)],'Classes',unique(imds.Labels))];
 %% %% 
@@ -199,6 +202,7 @@ myactivationsone = zeros(length(imds.Labels),1);
 myactivationstwo = zeros(length(imds.Labels),1);
 
 global foldmaxaccuracy;
+global stalecounter;
 for iii =1:Nloocv
 %for iii =1:2
 disp(iii);
@@ -207,6 +211,10 @@ imdsTrain.Labels = imds.Labels(cv.training(iii));
 
 imdsValidation.Files = imds.Files(cv.test(iii));
 imdsValidation.Labels = imds.Labels(cv.test(iii));
+
+% Augment training data: random axis flips and mild intensity noise
+augTrainDS = transform(imdsTrain, @augment3DVol);
+
 options = trainingOptions('adam', ...
     'InitialLearnRate',0.001, ...
     'MaxEpochs',hyperepoch(idepoch), ...
@@ -215,7 +223,7 @@ options = trainingOptions('adam', ...
     'ValidationFrequency',1, ...
     'Verbose',false, ...
     'MiniBatchSize',batchsize, ...
-    'L2Regularization', 1e-4, ...
+    'L2Regularization', 0.01, ...
     'LearnRateSchedule','piecewise', ...
     'LearnRateDropFactor',0.1, ...
     'LearnRateDropPeriod',20, ...
@@ -240,7 +248,8 @@ options = trainingOptions('adam', ...
 
 % analyzeNetwork(net{iii})
 foldmaxaccuracy = -inf; % reset global
-[net{iii}, info{iii}] = trainNetwork(imdsTrain,layers,options);
+stalecounter = 0;       % reset global
+[net{iii}, info{iii}] = trainNetwork(augTrainDS,layers,options);
 disp(sprintf('max val accuracy %f',max(info{iii}.ValidationAccuracy)))
 %% Classify Validation Images and Compute Accuracy
 % Predict the labels of the validation data using the trained neural network, 
@@ -277,6 +286,49 @@ C = confusionmat(YPred ,imds.Labels)
 end
 end
 
+observedAccuracy = accuracy(1,1);
+
+%% Permutation test — estimate p-value under null hypothesis of no signal
+% Set numPerms=0 to skip. Each perm runs a full 5-fold CV, so this takes
+% numPerms * (training time) to complete.
+numPerms = 50;
+permAccuracy = zeros(numPerms,1);
+if numPerms > 0
+    disp('Running permutation test...');
+    for p = 1:numPerms
+        shuffledLabels = imds.Labels(randperm(numel(imds.Labels)));
+        YPermPred = categorical(NaN(length(shuffledLabels),1));
+        for iii = 1:Nloocv
+            imdsTrain.Files  = imds.Files(cv.training(iii));
+            imdsTrain.Labels = shuffledLabels(cv.training(iii));
+            imdsValidation.Files  = imds.Files(cv.test(iii));
+            imdsValidation.Labels = shuffledLabels(cv.test(iii));
+            augPermDS = transform(imdsTrain, @augment3DVol);
+            permOpts = trainingOptions('adam', ...
+                'InitialLearnRate',0.001, ...
+                'MaxEpochs',hyperepoch(1), ...
+                'Shuffle','every-epoch', ...
+                'ValidationData',imdsValidation, ...
+                'ValidationFrequency',1, ...
+                'Verbose',false, ...
+                'MiniBatchSize',batchsize, ...
+                'L2Regularization',0.01, ...
+                'OutputNetwork','best-validation');
+            foldmaxaccuracy = -inf; stalecounter = 0;
+            permNet = trainNetwork(augPermDS, layers, permOpts);
+            YPermPred(cv.test(iii)) = classify(permNet, imdsValidation);
+        end
+        permAccuracy(p) = sum(YPermPred == shuffledLabels) / numel(shuffledLabels);
+        fprintf('Perm %d/%d: %.3f\n', p, numPerms, permAccuracy(p));
+    end
+    p_value = mean(permAccuracy >= observedAccuracy);
+    fprintf('Observed accuracy: %.3f | Permutation p-value: %.3f\n', observedAccuracy, p_value);
+    figure(5);
+    histogram(permAccuracy, 20); hold on;
+    xline(observedAccuracy, 'r--', 'LineWidth', 2);
+    xlabel('Accuracy'); title(sprintf('Permutation test (p=%.3f)', p_value));
+end
+
 figure(2)
 plot(hyperepoch,accuracy(1,:) )
 
@@ -298,15 +350,24 @@ function imagedata= mycustomreader(filename)
      %imagedata = vectorimage;
 end
 
+function data = augment3DVol(data)
+    % Random flips along each spatial axis
+    if rand() > 0.5, data = flip(data, 1); end
+    if rand() > 0.5, data = flip(data, 2); end
+    if rand() > 0.5, data = flip(data, 3); end
+    % Small additive Gaussian noise scaled to volume std
+    data = data + 0.02 * std(data(:)) * randn(size(data));
+end
+
 function stop = stopTraining(info)
-%info.ValidationAccuracy
-  global foldmaxaccuracy;
-  if (info.ValidationAccuracy>foldmaxaccuracy)
-     foldmaxaccuracy= info.ValidationAccuracy
-  end
-  if (info.Epoch>40)
-    stop = info.ValidationAccuracy >= foldmaxaccuracy & foldmaxaccuracy > 70 ;
-  else
-    stop = info.ValidationAccuracy > 90;
-  end
+    global foldmaxaccuracy;
+    global stalecounter;
+    if info.ValidationAccuracy > foldmaxaccuracy
+        foldmaxaccuracy = info.ValidationAccuracy;
+        stalecounter = 0;
+    else
+        stalecounter = stalecounter + 1;
+    end
+    % Stop after 15 epochs with no improvement in validation accuracy
+    stop = stalecounter >= 15;
 end
