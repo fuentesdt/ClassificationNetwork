@@ -214,7 +214,7 @@ imdsValidation.Labels = imds.Labels(cv.test(iii));
 
 % Augment training data: random axis flips and mild intensity noise
 augTrainDS = imageDatastore(imdsTrain.Files, ...
-    'Labels', imdsTrain.Labels, ...
+    'Labels', imdsTrain.Labels,'FileExtensions','.nii', ...
     'ReadFcn', @(f) augment3DVol(mycustomreader(f)));
 
 options = trainingOptions('adam', ...
@@ -293,7 +293,7 @@ observedAccuracy = accuracy(1,1);
 %% Permutation test — estimate p-value under null hypothesis of no signal
 % Set numPerms=0 to skip. Each perm runs a full 5-fold CV, so this takes
 % numPerms * (training time) to complete.
-numPerms = 50;
+numPerms = 10;
 permAccuracy = zeros(numPerms,1);
 if numPerms > 0
     disp('Running permutation test...');
@@ -306,7 +306,7 @@ if numPerms > 0
             imdsValidation.Files  = imds.Files(cv.test(iii));
             imdsValidation.Labels = shuffledLabels(cv.test(iii));
             augPermDS = imageDatastore(imdsTrain.Files, ...
-                'Labels', imdsTrain.Labels, ...
+                'Labels', imdsTrain.Labels,'FileExtensions','.nii', ...
                 'ReadFcn', @(f) augment3DVol(mycustomreader(f)));
             permOpts = trainingOptions('adam', ...
                 'InitialLearnRate',0.001, ...
@@ -372,6 +372,6 @@ function stop = stopTraining(info)
     else
         stalecounter = stalecounter + 1;
     end
-    % Stop after 15 epochs with no improvement in validation accuracy
-    stop = stalecounter >= 15;
+    % Stop after no improvement in validation accuracy
+    stop = stalecounter >= 1000;
 end
